@@ -1,0 +1,174 @@
+---
+title: 'Regression Analysis: MPG in Automatic vs Manual cars'
+author: "Edwin Seah"
+date: "19 May 2015"
+output:
+  pdf_document: default
+  html_document: default
+fontsize: 10pt
+---
+```{r global_options, include=FALSE}
+# Setting global options for R markdown
+knitr::opts_chunk$set(fig.path='figures/',
+                      echo=TRUE, 
+                      warning=FALSE,
+                      message=FALSE)
+```
+
+### Executive Summary
+
+This analysis checks if miles per gallon (MPG) benefit more from automatic versus manual transmissions, and quantifies any such difference. Although there is a stark difference in expected MPG between automatic and manual cars, in itself it is not a realistic predictor since the variables **wt** (lb/1000) and **qsec** (1/4 mile time) have significant influences on MPG, settling finally on our stepwise derived model of **mpg ~ factor(am) + wt + qsec**, after checking it versus a designed model involving groups of regressors that mpg is likely dependent on.
+
+### Getting/Transforming Data and some Exploratory Data Analysis  
+
+The **mtcars** dataset comprises fuel consumption (MPG) and 10 aspects of automobile design and performance for 32 cars, loaded as `data(mtcars)` and stored in a data frame **m**. We transform **am** as factor variable of 2 levels ("Automatic, "Manual"). Cursorily our box-whisker plot (Fig.1) indicates Manual transmissions have a clear advantage over Automatic transmissions in MPG terms.
+```{r load_data, echo=FALSE, cache=TRUE}
+data(mtcars) ; m <- mtcars ; 
+m$am <- factor(m$am, labels=c("(Automatic)", "(Manual)"))
+#m$cyl <- factor(m$cyl, labels=c(4, 6, 8))           # not used
+#m$vs <- factor(m$vs, labels=c("(V)", "(Straight)")) # not used
+#m$carb <- factor(m$carb, labels=c(1,2,3,4,6,8))     # not used
+```
+
+### Quantifying the relationship via Regression Analysis  
+
+As a baseline we simply fit **mpg** (outcome) against Transmission Type **am** (predictor). 
+```{r lm_mpg_trans, cache=TRUE}
+m$am <- factor(m$am, labels=c("(Automatic)", "(Manual)"))
+fitam <- lm(mpg ~ am, data=m) ; summary(fitam)$coef
+```
+This model gives an MPG expected gain of **`r round(summary(fitam)$coef[2], 2)`** going from an Automatic to Manual transmission. However, our adjusted R^2^ is **`r round(summary(fitam)$adj.r.squared, 2)`** (DF = `r fitam$df[2]`); low as we had not fit 10 other candidate regressors. Residuals (Fig.2) exhibit homoskedacity (evenly scattered around 0) and nearly normally distributed, but only **`r round(summary(fitam)$adj.r.squared*100, 2)`%** of MPG variability was explained.
+
+Given limitations in explaining MPG variability with just **am**, a quick parsimonious model can be found using a mechanical backwards stepwise elimination approach (at a somewhat abritrary siginificance level of ($\alpha$ = 5%). For code brevity we use the inbuilt automated AIC method by calling`step()` (*fstep*); it gives us the same resultant model as the manual way (*fman*, see Fig. 3).
+```{r lm_mpg_backwards_elimination_manual, echo=FALSE, cache=TRUE}
+fitb1 <- lm(data=m, mpg ~ .)
+fitb2 <- update(fitb1, mpg ~ . - cyl)
+fitb3 <- update(fitb2, mpg ~ . - cyl - vs)
+fitb4 <- update(fitb3, mpg ~ . - cyl - vs - carb)
+fitb5 <- update(fitb4, mpg ~ . - cyl - vs - carb - gear)
+fitb6 <- update(fitb5, mpg ~ . - cyl - vs - carb - gear - drat)
+fitb7 <- update(fitb6, mpg ~ . - cyl - vs - carb - gear - drat - disp)
+fman <- update(fitb7, mpg ~ . - cyl - vs - carb - gear - drat - disp - hp)
+```
+```{r lm_mpg_backwards_elimination_auto}
+full <- lm(data=m, mpg ~ .) ; fstep <- summary(step(full, direction="backward", trace=0))
+print(rbind(fman$coef, fstep$coef[1:4]))
+```
+We arrive at a model with an adjusted R^2^ of **`r round(summary(fman)$adj.r.squared, 2)`** (DF = `r fman$df[2]`), with residuals showing some tail-skew in the normal probability plot (Fig. 4).
+
+To check inflation of the estimate's variance by regressor groups we design a model that includes suspected/likely dependent variables of **mpg**, fitting the following models of interest (groups) in order:
+
+Group      | Weight | Engine Power | Engine Configuration | Gearing
+-----------|--------|--------------|----------------------|--------
+Regressors | wt | disp, hp | cyl, carb, vs | gear, drat
+Model | fit1 | fit2 | fit3 | fit4
+
+Using a nested liklihood ratio test (*fit1* to *fit4*) with our base *fit* helps check their contribution to **mpg** via the ANOVA results:
+```{r lm_nested_model_testing_fit, echo=FALSE}
+fit <- lm(mpg ~ am, data=m)
+fit1 <- update(fit, mpg ~ am + wt)
+fit2 <- update(fit, mpg ~ am + wt + disp + hp)
+fit3 <- update(fit, mpg ~ am + wt + disp + hp + cyl + carb + vs)
+fit4 <- update(fit, mpg ~ am + wt + disp + hp + cyl + carb + vs + gear + drat)
+fit5 <- lm(mpg ~ am + wt + qsec, data=m)
+```
+```{r lm_nested_model_testing_fit_anova}
+anova(fit, fit1, fit2, fit3, fit4)[1:6]
+```
+```{r cov_check}
+cv <- function(f) {summary(f)$cov.unscaled[2,2]}
+c(cv(fit1), cv(fit2), cv(fit3), cv(fit4), cv(fit5))/cv(fit)
+```
+```{r finalfit, echo=FALSE}
+s2 <- summary(fit2) ; s5 <- summary(fit5)
+```
+We would opt for *fit2* (**p-value = `r round(anova(fit, fit1, fit2, fit3, fit4)[1:6][3,6],4)`**), rejecting for lack of significance) over the others. Our covariances and adjusted R^2^ for *fit2* (**`r round(cv(fit2)/cv(fit), 2)`**, **`r round(s2$adj.r.squared, 2)`**) and *fit5* (**`r round(cv(fit5)/cv(fit), 2)`**, **`r round(s5$adj.r.squared, 2)`**) are similar, with *fit2* residuals (Fig. 5) showing the Maserati Bora exerting very high leverage. VIF for *fit2* regressors are higher than in our stepwise model *fit5*:
+```{r vif_check}
+library(car) ; sqrt(vif(fit2)) ; sqrt(vif(fit5))
+```
+We note that quarter mile time **qsec** has a very low VIF viz both **hp** and **disp**, which are likely colinear. Intuitively **qsec** may be a good proxy for any/all of the engine power/configuration variables. We conclude in favour of *fit5* (**mpg ~ factor(am) + wt + qsec**); it is simpler (one less regressor) than *fit2* with a marginally better adjusted R^2^ of **`r round(s5$adj.r.squared, 2)`**, giving an expected **`r round(s5$coef[3], 2)`** MPG per 1000lbs increase in weight and **`r round(s5$coef[2], 2)`** gain going to a Manual transmission, and **`r round(s5$coef[4], 2)`** MPG gain per 1 second slower 1/4 mile timing **qsec**.
+
+### Project Repo
+
++ All files and full code used are available from the [Github Project Repository](https://github.com/slothdev/RMproject-Repo) (https://github.com/slothdev/RMproject-Repo)  
+
+### Appendix
+
+### Fig. 1 - MPG by Transmission Type
+
+Both the median and inter-quartile range (or middle 50% of all cars) for Manual transmission type cars are clearly higher than Automatic transmission cars.
+```{r fig1_eda_mpg_trans}
+boxplot(mpg ~ am, 
+        data=m, 
+        xlab="Transmission Type", 
+        ylab="Miles per Gallon", 
+        names=c("Automatic", "Manual"), 
+        main = "Fig.1 - MPG by Transmission Type")
+```
+
+### Fig. 2 - Residual and QQ plots of MPG by Transmission Type
+
+```{r fig2_qq_resid_mpgByTrans}
+par(mfrow=c(1,2))
+# Residuals plot
+plot(resid(fit), main="Residual Plot (mpg ~ am)")
+abline(a=0, b=0)
+# Normal Probability Plot
+qqnorm(rstandard(fit), 
+       ylab="Standardized Residuals", 
+       xlab="Normal Scores")
+qqline(rstandard(fit))
+```
+
+### Fig. 3 - Simple backwards elimination stepwise by highest p-value
+
+1. Start with a full model, as it provides an unbiased variance estimate for MPG due to including all variables. It may contain regressors with high colinearity and litle unique contribution to **mpg**.
+
+2. Eliminate one regressor variable at a time (whichever has the highest p-value from the T-test) and refit.
+
+3. Stop eliminating when no regressor has a p-value higher than $\alpha$ or when our adjusted R^2^ stops going up.
+
+These intermediate steps proceed as follows:
+```{r fig3_lm_mpg_backwards_elimination_summary}
+showp <- function(b) {summary(b)$coeff[,4]}
+showp(fitb1)
+showp(fitb2)
+showp(fitb3)
+showp(fitb4)
+showp(fitb5)
+showp(fitb6)
+showp(fitb7)
+showp(fman)
+```
+
+\newpage
+
+### Fig. 4 - Residuals from backwards elimination (fman aka fit5)
+
+```{r fig4_lm_mpg_backwards_elimination_resplot, echo=FALSE, eval=FALSE}
+par(mfrow=c(1,2))
+# Residuals plot
+plot(resid(fman), main="Residual Plot (MPG ~ am + wt + qsec)")
+abline(a=0, b=0)
+# Normal Probability Plot
+qqnorm(rstandard(fman), ylab="Standardized Residuals", xlab="Normal Scores")
+qqline(rstandard(fman))
+```
+```{r fig4_lm_fman_plotfit, fig.align='center'}
+par(mfrow=c(2,2))
+plot(fman)
+```
+
+\newpage
+
+### Fig. 5 - Residuals from fit2
+
+```{r fig5_lm_fit2_plotfit, fig.align='center'}
+par(mfrow=c(2,2))
+plot(fit2)
+```
+
+```{r echo=FALSE, eval=FALSE}
+newdata = data.frame(am=mean(am))
+predict(mpgByWt.lm, data.frame(am=mean(am), interval="confidence"))
+```
